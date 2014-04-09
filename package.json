@@ -1,20 +1,14 @@
 {
   "name": "require-handlebars-plugin",
   "version": "0.8.0",
-  "author": "Alex Sexton <alexsexton@gmail.com>",
-  "description": "A plugin for handlebars in require.js",
+  "author": "Felix Kiunke <mail@fkiunke.de>",
+  "description": "An improved Handlebars plugin for require.js",
   "repository": {
     "type": "git",
-    "url": "https://SlexAxton@github.com/SlexAxton/require-handlebars-plugin.git"
+    "url": "https://FelixKiunke@github.com/FelixKiunke/require-handlebars-plugin.git"
   },
-  "license": "To Use: WTFPL, To Contribute: Dojo CLA",
+  "license": "WTFPL",
   "main": "hbs",
-  "volo": {
-    "type": "directory",
-    "dependencies": {
-      "Handlebars": "https://raw.github.com/SlexAxton/require-handlebars-plugin/master/Handlebars.js"
-    }
-  },
   "jam": {
   	"name": "hbs",
   	"dependencies": {
@@ -25,6 +19,7 @@
     "test":"node_modules/karma/bin/karma start --singleRun"
   },
   "contributors": [
+    "Alex Sexton <alexsexton@gmail.com>",
     "Xavier Damman <xdamman@gmail.com>"
   ],
   "devDependencies": {
