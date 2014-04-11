@@ -1,6 +1,6 @@
 {
   "name": "require-handlebars-plugin",
-  "version": "0.8.0",
+  "version": "0.2.0",
   "author": "Felix Kiunke <mail@fkiunke.de>",
   "description": "An improved Handlebars plugin for require.js",
   "repository": {

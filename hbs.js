@@ -1,5 +1,5 @@
 /**
- * @license Handlebars hbs 0.8.0 - Felix Kiunke, but Handlebars has it's own licensing junk
+ * @license Handlebars hbs 0.2.0 - Felix Kiunke, but Handlebars has it's own licensing junk
  *
  * Available via the MIT or new BSD license.
  * see: http://github.com/jrburke/require-cs for details on the plugin this was based off of
@@ -8,55 +8,53 @@
 /*jslint evil: true, strict: false, plusplus: false, regexp: false */
 /*global require: false, XMLHttpRequest: false, ActiveXObject: false, define: false, process: false, window: false */
 
-define(["hbs/handlebars"], function (Handlebars) {
-	var fs, filecode = "w+", buildMap = [];
-	var templateExtension = "hbs";
-	var devStyleDirectory = "/styles/";
-	var buildStyleDirectory = "/demo-build/styles/";
-	var helperDirectory = "templates/helpers/";
-	var buildCSSFileName = "screen.build.css";
 
-	var fetchText = function() { throw new Error("Environment unsupported.") };
+/*
+require.config.hbs = {
+	basePath:    null, // The base path for templates.
+	partialPath: null, // The path for partials. Can be relative to basePath (e.g. “./partials”), or absolute
+	helperPath:  null, // Path for helpers. Can be relative to basePath
+
+*/	
+
+
+define(["hbs/handlebars"], function (Handlebars) {
+	var fs, buildMap = [], _partials = {};
+
+	var fetchText = function() { throw new Error("Unsupported environment.") };
 
 	// Check if window object exists (if we are in a browser)
 	if (typeof window !== "undefined") {
 		fetchText = function (url, callback) {
 			var xhr = new XMLHttpRequest();
 			xhr.open("GET", url, true);
-			xhr.onreadystatechange = function (evt) {
-				//Do not explicitly handle errors, those should be visible via console output in the browser.
-				// TODO: Properly handle errors
-				if (xhr.readyState === 4)
-					callback(xhr.status < 400 ? xhr.responseText : null);
+			xhr.onreadystatechange = function(evt) {
+				if (xhr.readyState === 4) {
+					if (xhr.status < 400) {
+						callback(null, xhr.status < 400 ? xhr.responseText : null);
+					} else {
+						var err = new Error("Failed to load " + url);
+						err.type = ""+xhr.status+"#"+xhr.statusText.toLowerCase().replace(/\W/g, "_");
+						callback(err);
+					}
+				}
 			};
 			xhr.send(null);
 		};
 	} else if (typeof process !== "undefined" && process.versions && !!process.versions.node) {
-		//Using special require.nodeRequire, something added by r.js.
+		// Use require.nodeRequire, which is added by r.js.
 		fs = require.nodeRequire("fs");
 		fetchText = function (path, callback) {
-			var body = fs.readFileSync(path, "utf8") || "";
-			// we need to remove BOM stuff from the file content
-			body = body.replace(/^\uFEFF/, "");
-			callback(body);
+			try {
+				var body = fs.readFileSync(path, "utf8") || "";
+				// Remove a possible BOM
+				body = body.replace(/^\uFEFF/, "");
+				callback(null, body);
+			} catch(err) {
+				callback(err);
+			}
 		};
 	}
-
-	var _partials = {};
-
-	var cache = {};
-/*	function fetchOrGetCached(path, callback) { // NOT USED
-		if (cache[path]) {
-			callback(cache[path]);
-		} else {
-			fetchText(path, function(data) {
-				cache[path] = data;
-				callback.call(this, data);
-			});
-		}
-	};*/
-	var styleList = [];
-	var styleMap = {};
 
 	function arrayUnique(array) {
 		if (array == null) return [];
@@ -67,7 +65,57 @@ define(["hbs/handlebars"], function (Handlebars) {
 			if (result.indexOf(array[i]) === -1) result.push(array[i]);
 
 		return result;
-	};
+	}
+
+	function jsEscape(content) {
+		return content.replace(/(['\\])/g, '\\$1').replace(/[\f]/g, "\\f").replace(/[\b]/g, "\\b")
+			.replace(/[\n]/g, "\\n").replace(/[\t]/g, "\\t").replace(/[\r]/g, "\\r")
+			.replace(/[\u2028]/g, "\\u2028").replace(/[\u2029]/g, "\\u2029");
+	}
+
+	// Normalize a path, eliminating e.g. occurences of “..” or double slashes where possible.
+	function normalizePath(path) {
+		var tokens = path.replace(/\/\/+/g,"/").split("/"), token,
+			result = [], res, dotFirst = false;
+
+		if (tokens[0] == ".") dotFirst = true;
+		tokens = tokens.filter(function(tok) { return tok != "." })
+
+		while ((token = tokens.shift()) != null) {
+			if (token == ".." && result.length && result[result.length - 1] != "..") {
+				if (result.length != 1 || result[0] != "")
+					result.pop() == ".";
+			} else {
+				result.push(token);
+			}
+		}
+
+		if (dotFirst && result[0] != "..") result.unshift(".");
+		return result.length == 1 && result[0] == "" ? "/" : result.join("/");
+	}
+
+	// Adds basePath in front of path if path does not start with “.”, “..” or “/”.
+	//  “.” and “..” are resolved against currentPath.
+	// In the end, the toUrl function is applied to the result (if specified). This will probably
+	//  be the RequireJS toUrl function that resolves paths relative to rules specified in its conf
+	function resolvePath(path, basePath, currentPath, toUrl) {
+		path = path || ""; basePath = basePath || ""; currentPath = currentPath || "";
+
+		if (basePath.length && basePath[basePath.length - 1] != "/")
+			basePath += "/";
+		if (currentPath.length && currentPath[currentPath.length - 1] != "/")
+			currentPath += "/";
+
+		if (typeof toUrl !== "function") toUrl = function(p) {return p};
+
+		if (/^\.\.?(\/|$)/.test(path))
+			return normalizePath( toUrl(normalizePath(currentPath + path)) );
+		else if (path[0] == "/")
+			return normalizePath(path);
+		else
+			return normalizePath( toUrl(normalizePath(basePath + path)) );
+	}
+	window.resolve = resolvePath;
 
 	return {
 		get: function () {
@@ -81,20 +129,25 @@ define(["hbs/handlebars"], function (Handlebars) {
 			}
 		},
 
-		version: "0.5.0",
+		version: "0.2.0",
 
 		load: function (name, parentRequire, onload, config) {
+			var currentPath, currentDir,
+				toUrl = parentRequire.toUrl; // Shortcut
+
 			config.hbs = config.hbs || {};
 
-			var partialsUrl = "";
-			if(config.hbs.partialsUrl) {
-				partialsUrl = config.hbs.partialsUrl;
-				if(partialsUrl[partialsUrl.length - 1] != "/") partialsUrl += "/";
-			}
+			var basePath    = resolvePath(config.hbs.basePath,    "", "",      toUrl);
+			var partialPath = resolvePath(config.hbs.partialPath, "", basePath, toUrl);
+			var helperPath  = resolvePath(config.hbs.helperPath,  "", basePath, toUrl);
 
-			var partialDeps = [];
+			currentPath = resolvePath(name, basePath, "", toUrl);
+			currentDir  = currentPath.substr(0, currentPath.lastIndexOf('/') + 1);
 
-			function recursiveNodeSearch(statements, res) {
+			if (config.hbs.extension !== false)
+				currentPath += "." + (config.hbs.extension || "hbs");
+
+			function recursivePartialSearch(statements, res) {
 				statements.forEach(function(stmt) {
 					if (!stmt) return;
 
@@ -102,41 +155,23 @@ define(["hbs/handlebars"], function (Handlebars) {
 						res.push(stmt.partialName.name);
 
 					if (stmt.program && stmt.program.statements)
-						recursiveNodeSearch(stmt.program.statements, res);
+						recursivePartialSearch(stmt.program.statements, res);
 
 					if (stmt.inverse && stmt.inverse.statements)
-						recursiveNodeSearch(stmt.inverse.statements, res);
+						recursivePartialSearch(stmt.inverse.statements, res);
 				});
 				return res;
 			}
 
-			function findPartialDeps(nodes) {
+			function findPartials(nodes) {
 				var res = [];
 				if (nodes && nodes.statements)
-					return arrayUnique(recursiveNodeSearch(nodes.statements, res));
+					return arrayUnique(recursivePartialSearch(nodes.statements, res));
 				else
 					return [];
 			}
 
-			function composeParts(parts) {
-				if (!parts) return [];
-
-				var res = [parts[0]], cur = parts[0],
-					i, len;
-
-				for (i = 1, len = parts.length; i < len; i++) {
-					if (parts.hasOwnProperty(i)) {
-						cur += "." + parts[i];
-						res.push(cur);
-					}
-				}
-				return res;
-			}
-
-			function recursiveVarSearch(statements, res, prefix, helpersres) {
-				prefix = prefix ? prefix + "." : "";
-
-				var flag = false;
+			function recursiveHelperSearch(statements, res) {
 
 				statements.forEach(function(statement) {
 					var i, len;
@@ -145,242 +180,164 @@ define(["hbs/handlebars"], function (Handlebars) {
 					if (!statement) return;
 
 					// if it's a mustache block
-					if (statement.type === "mustache") {
+					if (statement.type === "mustache" &&
+						statement.params && statement.params.length)
+					{
+						// As far as we’re concerned, this has to be a
+						//  helper of some kind because it has parameters
+						res.push(statement.id.string);
 
-						// No params, no helper
-						if (!statement.params || !statement.params.length) {
-							composeParts(statement.id.parts)
-							.forEach(function(part) {
-								if (part) res.push(prefix + part);
-							});
-						} else if (statement.params.length) {
-							// As far as we’re concerned, this has to be a
-							//  helper of some kind because it has params
-							helpersres.push(statement.id.string);
-
-							statement.params.forEach(function(param) {
-								composeParts(param.parts)
-								.forEach(function(part) {
-									if (part) res.push(prefix + part);
-								});
-							});
-						}
-					} else if (statement.type == "block" && statement.mustache &&
+						// Look for SEXPRs (sub expressions as in “{{helper (helper2 "foo")}}”)
+						//  and add the helper name in the sub expression to the result array
+						statement.params.forEach(function(param) {
+							if (param.type == "sexpr") res.push(param.id.string);
+						});
+					} else if (statement.type == "block" && statement.mustache && // Block helpers
 					statement.program && statement.program.statements) {
 						// Even empty blocks have a “program” (the contents of the block),
 						// only with an empty statements array
 
-						// If it's a block, we have to evaluate the parameters of the node that
-						// introduces the block (e.g. the {{#with}} or {{#helper}})
+						// If it's a block, we have to evaluate the node that
+						// introduces the block (e.g. the {{#with}} or {{#helper}}):
+						recursiveHelperSearch([statement.mustache], res);
 
-						// TODO: We have to look for a new context -> new prefix which is introduced
-						// by {{#with}} for instance. MIND YOU, #if blocks don’t introduce new contexts AFAIK
-						recursiveVarSearch([statement.mustache], res, prefix, helpersres);
-						// TODO: Process Sexpr (sub expressions as in “{{#helper (helper2 "foo")}}”)
-
-						// TODO: Process block programs
-					//	sideways = recursiveVarSearch([statement.mustache],[], "", helpersres)[0] || "";
-					//	console.warn("SIDEWAYS: " + sideways);
-					//	recursiveVarSearch(statement.program.statements, res, prefix + (sideways ? prefix ? ".XXX."+sideways : sideways : ""), helpersres);
-					//	if (statement.inverse && statement.inverse.statements)
-					//		recursiveVarSearch(statement.inverse.statements, res, prefix + (sideways ? prefix ? "."+sideways : sideways : ""), helpersres);
+						// Process the block’s contents
+						recursiveHelperSearch(statement.program.statements, res);
+						if (statement.inverse && statement.inverse.statements)
+							recursiveHelperSearch(statement.inverse.statements, res);
 					}
 				});
 				return res;
 			}
 
-			// This finds the Helper dependencies since it's soooo similar --- ???
-			function getExternalDeps(nodes) { // TODO: ...
-				var res        = [];
-				var helpersres = [];
+			function findHelpers(nodes) {
+				var res = [];
 
 				if (nodes && nodes.statements)
-					res = recursiveVarSearch(nodes.statements, [], null, helpersres);
+					res = recursiveHelperSearch(nodes.statements, res);
 
-				var defaultHelpers = [
-					"each",
-					"if",
-					"unless",
-					"with"
+				var builtinHelpers = [
+					"each", "if", "unless", "with", "helperMissing", "blockHelperMissing"
 				];
 
-				return {
-					vars: arrayUnique(res).map(function(e) {
-						if (e === "")
-							return ".";
-						if (e[e.length - 1] === ".")
-							return e.slice(0, -1) + "[]";
-						return e;
-					}),
-
-					helpers: arrayUnique(helpersres).map(function(e){
-						if (defaultHelpers.indexOf(e) >= 0)
-							return undefined;
-						else
-							return e;
-					}).filter(function(e) { return !!e }) // Remove falsy values
-				};
-			}
-
-			// Normalize a path, removing e.g. occurences of “..” where possible.
-			// Should be somewhat POSIX compliant, but you shouldn’t rely on that.
-			function normalizePath(path) {
-				var tokens = path.replace(/\/\/+/g,"/").split("/"), token,
-					result = [], res, dotFirst = false;
-
-				if (tokens[0] == ".") dotFirst = true;
-				tokens = tokens.filter(function(tok) { return tok != "." })
-
-				while ((token = tokens.shift()) != null) {
-					if (token == ".." && result.length && result[result.length - 1] != "..") {
-						if (result.length != 1 || result[0] != "")
-							result.pop() == ".";
-					} else {
-						result.push(token);
-					}
-				}
-
-				if (dotFirst && result[0] != "..") result.unshift(".");
-				return result.length == 1 && result[0] == "" ? "/" : result.join("/");
+				return arrayUnique(res).filter(function(hlp) {
+					return !!hlp && builtinHelpers.indexOf(hlp) < 0;
+				});
 			}
 
 			function fetchAndRegister(path) {
 				path = normalizePath(path);
-				console.debug("->");
-				console.log("GETTING "+path+"...");
-				fetchText(path, function(text) {
-					var nodes, partials, extDeps, vars, helpers, deps,
-						i, len;
 
-					if (text == null)
-						throw new Error("UNABLE TO GET " + path);
-					else
-						console.info("GOT " + path)
+				fetchText(path, function(err, text) {
+					var nodes,
+						partials, helpers, deps = [], depStr = "",
+						options, precompiled, out;
+
+					if (err)
+						return onload.error(err);
 
 					nodes = Handlebars.parse(text);
 
-					partials = findPartialDeps(nodes);
-					extDeps = getExternalDeps(nodes);
-					vars = extDeps.vars;
-					helpers = (extDeps.helpers || []);
+					options = config.hbs.compileOptions || {};
 
-				/*	console.log("-------- PARTIALS");
-					console.log(partials);
-					console.log("-------- EXT DEPS");
-					console.log(extDeps);
-					console.log("-------- ---- Vars");
-					console.log(extDeps.vars);
-					console.log("-------- ---- Helpers");
-					console.log(extDeps.helpers);*/
+					partials = findPartials(nodes);
+					helpers  = config.hbs.helpers != false ? findHelpers(nodes) : [];
 
 					var deps = [];
 					var depStr, helperDepStr, head, linkElem;
-					var baseDir = name.substr(0, name.lastIndexOf('/') + 1);
-
-					config.hbs = config.hbs || {};
 
 					partials.forEach(function(partial) {
-						var path;
-						if(partial[0] == ".") // relative path
-							path = normalizePath(baseDir + partial)
-						else if (partial[0] == "/") // Absolute path
-							path = normalizePath(partial);
-						else // path relative to config.hbs.partialsUrl (if defined)
-							path = normalizePath(partialsUrl + partial);
+						var path = resolvePath(partial,
+							partialPath || basePath, currentDir, parentRequire.toUrl);
 
+						// Different names can refer to the same partial (e.g. absolute vs.
+						//  relative paths, so we have to keep track of that
 						if (!_partials[path]) _partials[path] = [];
-
-						// We can reference the same partial via different paths
-						// (e.g. absolute vs. relative)
-						_partials[path].references = _partials[path].references || [];
-						_partials[path].references.push(partial);
-
-						config.hbs._loadedDeps = config.hbs._loadedDeps || {};
+						_partials[path].push(partial);
 
 						deps.push("hbs!" + path);
 					});
 
-					depStr = deps.map(function(dep) {
-						return "'" + dep.replace(/'/g, "\\'") + "'"
+					if (deps.length)    depStr = ",";
+
+					depStr += deps.map(function(dep) {
+						return "'" + jsEscape(dep) + "'";
 					}).join(",");
 
-					if (config.hbs.helpers == false) {
-						helperDepStr = "";
-					} else {
-						// TODO: Allow for definitions of helpers in the form
-						//   {"path/templates/helper": ["definedHelper1", "definedHelper2"]}
-						helperDepStr = (function () {
-							var paths = [];
+					if (helpers.length) depStr += ",";
 
-							function getPath(helper, templatePath) {
-								if (config.hbs && config.hbs.helperPathCallback)
-									return config.hbs.helperPathCallback(helper, templatePath);
-								else if (config.hbs && config.hbs.helperDirectory)
-									return config.hbs.helperDirectory + name;
-								else
-									return helperDirectory + name;
+					depStr += arrayUnique(helpers.map(function(hlp) {
+						function getHelperPath(helper, templatePath) {
+							var p;
+
+							// Find the helper file location in
+							// helpers: { ".../filename": ["helperName1", "helperName2", ...] }
+							if (typeof config.hbs.helpers == "object") {
+								for (var k in config.hbs.helpers) {
+									if (!config.hbs.helpers.hasOwnProperty(k) ||
+										!Array.isArray(config.hbs.helpers[k]))
+										continue;
+
+									if (config.hbs.helpers[k].indexOf(helper) >= 0) {
+										if (k == "") return null;
+										p = k;
+									}
+								}
 							}
 
-							helpers.forEach(function(hlp) {
-								paths.push("'" + getPath(hlp, path).replace(/'/g, "\\'") + "'");
-							});
-							return paths.join(",");
-						})();
-					}
+							if (!p && config.hbs.helperCallback)
+								p = config.hbs.helperCallback(helper, templatePath);
+							else if (!p)
+								p = helper;
 
+							if (p) p += ".js";
 
-					var options = config.hbs.compileOptions || {};
+							return resolvePath(p, helperPath || basePath, currentDir,
+								parentRequire.toUrl);
+						}
 
-					var precompiled = new Handlebars.JavaScriptCompiler().compile(
+						var p = getHelperPath(hlp, path);
+						return p == null ? null : "'" + jsEscape(p) + "'";
+					}).filter(function(h) { return !!h })).join(",");
+
+					precompiled = new Handlebars.JavaScriptCompiler().compile(
 						new Handlebars.Compiler().compile(nodes, options),
 						options);
 
-					if (depStr)       depStr       = "," + depStr;
-					if (helperDepStr) helperDepStr = "," + helperDepStr;
 
-					var out = "/* START_TEMPLATE */\n" +
+					out = "/* START_TEMPLATE */\n" +
 							"define(" +
-								(config.isBuild ? "" : "'" + name.replace(/'/g, "\\'") + "',") +
-								"['hbs','hbs/handlebars'" + depStr + helperDepStr+"], function(hbs, Handlebars) {\n" +
+								(config.isBuild ? "" : "'" + jsEscape(name) + "',") +
+								"['hbs','hbs/handlebars'" + depStr + "], function(hbs, Handlebars) {\n" +
 							"var t = Handlebars.template(" + precompiled + ");\n";
 
-					// TODO partials
-					(_partials[name] ? _partials[name].references : []).forEach(function(ref) {
-						out += "Handlebars.registerPartial('" + ref.replace(/'/g, "\\'") + "', t);";
+					(_partials[name] || []).forEach(function(ref) {
+						out += "Handlebars.registerPartial('" + jsEscape(ref) + "', t);";
 					});
-
-					if (!config.isBuild) {
-						// TODO: We don’t need this shit, do we? If not, we can finally remove those
-						//  fucking vars in getExternalDeps
-						out += "t.helpers = " + JSON.stringify(helpers) + ";\n" +
-								"t.vars = " + JSON.stringify(vars) + ";\n";
-					}
 
 					out += "return t;\n});\n/* END_TEMPLATE */\n";
 
-					/*if (document.body.children[0].tagName == "PRE")
-						document.body.innerHTML += "<pre style='border-top:10px solid #4080a0'>" + Handlebars.Utils.escapeExpression(out) + "</pre>";
-					else
-						document.body.parentNode.innerHTML = "<pre>" + Handlebars.Utils.escapeExpression(out) + "</pre>";*/
+					// if (document.body.children[0].tagName == "PRE")
+					// 	document.body.innerHTML += "<pre style='border-top:10px solid #4080a0'>" + Handlebars.Utils.escapeExpression(out) + "</pre>";
+					// else
+					// 	document.body.parentNode.innerHTML = "<pre>" + Handlebars.Utils.escapeExpression(out) + "</pre>";
 
 					if (config.isBuild) {
 						// Keep the stuff if it’s a build
 						buildMap[name + "@hbs"] = out;
 
 						// Load the JS we just created as a module.
-						// As of require.js 2.1.0, onload is automatically called
+						// As of RequireJS 2.1.0, onload is automatically called
 						//  after this has been executed.
 						onload.fromText(out);
-					}
-					else {
-						out += '\r\n//@ sourceURL=' + path;
-						// We have to pull in the deps from above
-						console.log("LOADING DEPS",deps, path)
+					} else {
+						out += "\n//@ sourceURL=" + path; // For Firebug/browser console
+
+						// We have to pull in the deps from above — or do we?
 						require(deps, function () {
-							console.log("LOADED" , deps, path)
-							console.log("EXECUTING", path);
 							onload.fromText(out); // Same as above
-							console.debug("<-");
+						}, function(err) {
+							onload.error(err);
 						});
 					}
 
@@ -389,11 +346,7 @@ define(["hbs/handlebars"], function (Handlebars) {
 				});
 			}
 
-			if (config.hbs.templateExtension === false) { // Don’t add an extension
-				fetchAndRegister(parentRequire.toUrl(name));
-			} else {
-				fetchAndRegister(parentRequire.toUrl(name + "." + (config.hbs.templateExtension || "hbs")));
-			}
+			fetchAndRegister(currentPath);
 		}
 	};
 });
